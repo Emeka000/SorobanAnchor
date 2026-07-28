@@ -1,6 +1,6 @@
 use alloc::{string::String as RustString, vec::Vec as RustVec};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, xdr::ToXdr, Address,
     Bytes, BytesN, Env, String, Symbol, Vec,
 };
 extern crate alloc;
@@ -512,10 +512,8 @@ fn kyc_record_key(env: &Env, subject: &Address) -> BytesN<32> {
 fn compliance_check_key(env: &Env, subject: &Address, check_type: &String) -> BytesN<32> {
     let xdr = subject.clone().to_xdr(env);
     let raw = xdr_to_vec(&xdr);
-    let mut ct_bytes = alloc::vec::Vec::with_capacity(check_type.len() as usize);
-    for i in 0..check_type.len() {
-        ct_bytes.push(check_type.get(i).unwrap_or(0));
-    }
+    let mut ct_bytes = alloc::vec![0u8; check_type.len() as usize];
+    check_type.copy_into_slice(&mut ct_bytes);
     make_storage_key(env, &[b"COMP", &raw, &ct_bytes])
 }
 
@@ -2552,11 +2550,58 @@ impl AnchorKitContract {
     // Rate limit configuration
     // -----------------------------------------------------------------------
 
-    pub fn set_rate_limit_config(env: Env, max_submissions: u32, window_length: u32) {
+    pub fn set_rate_limit_config(
+        env: Env,
+        max_submissions: u32,
+        window_length: u32,
+        burst_capacity: u32,
+        min_interval_ledgers: u32,
+    ) {
         Self::require_admin(&env);
-        let config = crate::rate_limiter::RateLimitConfig { max_submissions, window_length };
+        let config = crate::rate_limiter::RateLimitConfig {
+            max_submissions,
+            window_length,
+            burst_capacity,
+            min_interval_ledgers,
+        };
         RateLimiter::update_config(&env, &Self::get_admin(env.clone()), &config)
             .unwrap_or_else(|_| panic_with_error!(&env, ErrorCode::ValidationError));
+    }
+
+    /// Set a per-attestor rate limit override (admin only). See
+    /// [`RateLimiter::set_override`] for how overrides interact with the
+    /// global config.
+    pub fn set_attestor_rate_override(
+        env: Env,
+        attestor: Address,
+        max_submissions: u32,
+        window_length: u32,
+        burst_capacity: u32,
+        min_interval_ledgers: u32,
+    ) {
+        Self::require_admin(&env);
+        let config = crate::rate_limiter::RateLimitConfig {
+            max_submissions,
+            window_length,
+            burst_capacity,
+            min_interval_ledgers,
+        };
+        RateLimiter::set_override(&env, &Self::get_admin(env.clone()), &attestor, &config)
+            .unwrap_or_else(|_| panic_with_error!(&env, ErrorCode::ValidationError));
+    }
+
+    /// Remove a per-attestor rate limit override (admin only), reverting that
+    /// attestor to the global rate limit config.
+    pub fn remove_attestor_rate_override(env: Env, attestor: Address) {
+        Self::require_admin(&env);
+        RateLimiter::remove_override(&env, &Self::get_admin(env.clone()), &attestor)
+            .unwrap_or_else(|_| panic_with_error!(&env, ErrorCode::ValidationError));
+    }
+
+    /// Get the rate limit config that actually governs `attestor`: their
+    /// override if one is set, otherwise the global config.
+    pub fn get_attestor_rate_config(env: Env, attestor: Address) -> crate::rate_limiter::RateLimitConfig {
+        RateLimiter::effective_config(&env, &attestor)
     }
 
     // -----------------------------------------------------------------------
@@ -2582,7 +2627,7 @@ impl AnchorKitContract {
     }
 
     fn enforce_rate_limit(env: &Env, attestor: &Address) {
-        let config = RateLimiter::get_config(env);
+        let config = RateLimiter::effective_config(env, attestor);
         if RateLimiter::check_and_increment(env, attestor, &config).is_err() {
             panic_with_error!(env, ErrorCode::RateLimitExceeded);
         }

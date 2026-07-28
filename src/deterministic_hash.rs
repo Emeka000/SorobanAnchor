@@ -31,7 +31,7 @@ pub fn make_storage_key(env: &Env, parts: &[&[u8]]) -> BytesN<32> {
             input.push_back(*b);
         }
     }
-    env.crypto().sha256(&input)
+    env.crypto().sha256(&input).into()
 }
 
 /// Compute a canonical SHA-256 hash over attestation payload fields.

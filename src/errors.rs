@@ -87,6 +87,9 @@ pub enum ErrorCode {
     SessionOperationLimitExceeded = 27,
     InvalidWeights                = 28,
 
+    // Rate limiter extensions (29)
+    RateLimitBurstExceeded        = 29,
+
     // Cache errors (48–49)
     CacheExpired              = 48,
     CacheNotFound             = 49,
@@ -139,6 +142,7 @@ impl ErrorCode {
             ErrorCode::SessionClosed                  => "Session is closed",
             ErrorCode::SessionOperationLimitExceeded   => "Session operation limit exceeded",
             ErrorCode::InvalidWeights                  => "Routing weights must sum to 1.0",
+            ErrorCode::RateLimitBurstExceeded     => "Submission burst limit exceeded; slow down and retry after the burst window refills",
             ErrorCode::CacheExpired              => "Cache entry has expired",
             ErrorCode::CacheNotFound             => "Cache entry not found",
         }
@@ -301,6 +305,7 @@ impl AnchorKitError {
     pub fn kyc_rejected() -> Self { Self::from_code(ErrorCode::KycRejected) }
     pub fn webhook_delivery_failed() -> Self { Self::from_code(ErrorCode::WebhookDeliveryFailed) }
     pub fn rate_limit_exceeded() -> Self { Self::from_code(ErrorCode::RateLimitExceeded) }
+    pub fn rate_limit_burst_exceeded() -> Self { Self::from_code(ErrorCode::RateLimitBurstExceeded) }
     pub fn session_expired() -> Self { Self::from_code(ErrorCode::SessionExpired) }
     pub fn session_closed() -> Self { Self::from_code(ErrorCode::SessionClosed) }
     pub fn session_operation_limit_exceeded() -> Self { Self::from_code(ErrorCode::SessionOperationLimitExceeded) }
@@ -439,6 +444,7 @@ mod tests {
             ErrorCode::SessionClosed,
             ErrorCode::SessionOperationLimitExceeded,
             ErrorCode::InvalidWeights,
+            ErrorCode::RateLimitBurstExceeded,
             ErrorCode::CacheExpired,
             ErrorCode::CacheNotFound,
         ];
