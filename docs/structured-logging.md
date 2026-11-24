@@ -195,6 +195,61 @@ The correlation tests are the source of truth for these identifiers and their
 propagation rules: `tests/request_id_tests.rs`,
 `tests/trace_propagation_tests.rs`, and `tests/tracing_span_tests.rs`.
 
+## Reviewing new log fields
+
+`LogRecord` serialises every field value as given. `structured_log` has no
+redaction step, so code review is the control that keeps sensitive values out
+of logs.
+
+**Review rule:** a new field must be something an operator needs to diagnose
+the event. If it is not needed, leave it out. If the event must show that a
+sensitive value was involved, log a non-sensitive fact about it (whether it
+was present, its length, or its kind), never the value itself.
+
+### Data minimization versus redaction
+
+- **Data minimization** means the value never reaches the logger. This is the
+  required approach for tokens, secrets, and personal data in log fields.
+- **Redaction** means the value is replaced with a marker when it is
+  formatted. The credential types in `src/http_client.rs` (`ProxyCredentials`,
+  `RequestCredentials`, `OutboundRequestOptions`) print `<redacted>` in their
+  `Debug` output, and the CLI's `SecretKey` wrapper prints `[REDACTED]` (see
+  `tests/safe_logging_tests.rs`). Redaction is a safety net for accidental
+  formatting. It is not permission to pass these values, or their `Debug`
+  output, into log fields.
+
+### What to log and what to omit
+
+| Category | Examples | Rule |
+|----------|----------|------|
+| Tokens | SEP-10 JWTs, bearer tokens, `Authorization` and `Proxy-Authorization` header values, API-key header values, `X-Anchor-Signature` values | Omit. Log a flag instead, as `webhook.delivery_started` does with `signed`. |
+| Secrets | Stellar secret keys (`S...`), HMAC signing keys, proxy passwords, keystore passwords | Omit. Do not rely on redaction. |
+| User identifiers | KYC or SEP-12 fields (names, emails, phone numbers, postal addresses, ID numbers), end-user account details, memos that identify a person | Omit. Use the operational identifier the workflow already has, such as `transaction_id`. Role accounts already in the catalog (`attestor`, `sep10_issuer`, `proposer`, `endorser`) are fine. |
+| Request correlation identifiers | `trace_id`, `span_id`, `parent_span_id`, `correlation_id`, `origin_service`, `hop_count`, idempotency keys | Log them; they exist for correlation. Keep them opaque: never build them from tokens, secrets, or user identifiers, and never put user data in `baggage`. |
+| Operational metadata | `event`, `attempt`, `status`, `payload_bytes`, `max_attempts`, `dlq_key`, `dlq_depth`, error codes | Safe to log. |
+| URLs and error strings | `endpoint_url`, `url`, `error`, `last_error` | Log only when they cannot carry credentials. Strip userinfo and token-bearing query strings. Do not log errors that quote raw input. Proxy validation errors, for example, quote the proxy URL. |
+
+`TraceContext::root_from_seed` derives the trace ID from a SHA-256 digest of
+its seed. A guessable seed, such as an email address, can be recovered by
+hashing likely candidates, so never seed it with user identifiers or secrets.
+
+### Example
+
+Avoid this. The extra fields carry a token and a signing key (values elided):
+
+```json
+{"ts":1712345678,"seq":0,"level":"info","event":"webhook.delivery_started","fields":{"endpoint_url":"https://anchor.example.com/hook","authorization":"Bearer …","signing_key":"…"}}
+```
+
+Prefer this. It records the same facts without the secrets:
+
+```json
+{"ts":1712345678,"seq":0,"level":"info","event":"webhook.delivery_started","fields":{"endpoint_url":"https://anchor.example.com/hook","dlq_key":"anchor-1","payload_bytes":118,"max_attempts":2,"signed":true}}
+```
+
+For credential handling outside logs, see
+[Proxy Routing and Credential Handling](proxy-and-credentials.md#handling-credentials-safely).
+
 ## Validation
 
 - Unit tests in `src/structured_log.rs` cover the JSON envelope, escaping,

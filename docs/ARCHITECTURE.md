@@ -48,6 +48,49 @@ For the rationale behind this split, see
 [ADR-0002](adr/ADR-0002-dual-build-strategy.md). For the exact build commands
 and feature combinations, see [`docs/build-matrix.md`](build-matrix.md).
 
+## Cryptographic boundary
+
+The contract **verifies** signatures; it never **holds** the keys that make
+them. Signature verification (checking a signature against a registered
+public key) happens on-chain. Key custody (generating, storing, protecting,
+and using private keys or shared secrets) happens off-chain and is the
+operator's responsibility.
+
+| Material | Where it lives | Call sites |
+|----------|----------------|------------|
+| Ed25519 public keys | Contract storage (public ledger state) | Stored by `set_sep10_jwt_verifying_key`, `rotate_sep10_key`, and `register_attestor` in `src/contract.rs` |
+| Signatures | Contract arguments (public ledger state) | Checked with `env.crypto().ed25519_verify` in `sep10_jwt::verify_sep10_jwt` (`src/sep10_jwt.rs`) and `verify_attestation_signature` (`src/contract.rs`) |
+| Hashes | Computed in both builds | `env.crypto().sha256` in `src/deterministic_hash.rs` and for SEP-10 `jti` replay keys; `sha2` in host-side modules |
+| Stellar secret keys (`S...`) | Off-chain only, in operator custody | CLI signing in `src/main.rs` (`compute_ed25519_signature_hex`, via `ed25519-dalek`) |
+| HMAC signing keys | Off-chain only | Webhook and request signing in `src/webhook.rs` and `src/http_client.rs` (non-`wasm` builds) |
+| Keystore passwords | Off-chain only | Local credential store in `src/main.rs` (`aes-gcm`, `argon2`, `rpassword`; `std` feature only) |
+
+Rules for contributors:
+
+- **Never put private secrets on-chain.** Contract arguments and storage are
+  public. No contract entry point takes a private key, seed, HMAC key, or
+  password, and new entry points must not add one. The `signing_key` field of
+  the contract's `StellarToml` type is the anchor's _public_ `SIGNING_KEY`
+  from `stellar.toml`, not a secret.
+- **Never put private secrets in examples, fixtures, or docs.** Use
+  placeholders, or generate throwaway keys at test time (as the
+  `#[cfg(test)]` module in `src/sep10_jwt.rs` does with
+  `SigningKey::generate`).
+- **Keep signing host-side.** Code that touches secret material belongs in
+  modules gated by `#[cfg(not(feature = "wasm"))]` or `#[cfg(feature = "std")]`.
+  Those modules are excluded from the contract binary.
+- **Verification is not custody.** A successful `ed25519_verify` proves only
+  that the signature matches the registered public key. It says nothing about
+  how that key's private half is stored or who can use it.
+
+This section maps where primitives are used. It is not a statement about
+audit status. Changes to these call sites need a Security Reviewer; see the
+[Security Review Checklist](SECURITY_REVIEW_CHECKLIST.md#3-cryptographic-flows)
+and [Secrets and key management](SECURITY_REVIEW_CHECKLIST.md#9-secrets-and-key-management).
+For off-chain custody, see [Admin Key Management](governance-and-security.md#admin-key-management)
+and [Secret File Encryption](secret-file-encryption.md). Report suspected
+weaknesses privately through [Responsible Disclosure](governance-and-security.md#responsible-disclosure).
+
 ## Typical data flow
 
 1. A runtime component reads configuration or a remote response payload.

@@ -171,12 +171,58 @@ Deployments that fetch operator- or user-supplied URLs from a network with
 access to internal services need egress controls outside this library (for
 example a filtering egress proxy or network policy).
 
+### Outbound URL validation boundaries
+
+URL validation confirms that a configured URL is well formed. It does not
+prove that the endpoint is safe, trustworthy, or the one you meant. The
+library enforces only these checks on outbound URLs:
+
+| Layer | What it enforces | Where |
+|-------|------------------|-------|
+| Domain validation | HTTPS origin syntax, as listed above | `validate_anchor_domain` in `src/domain_validator.rs` |
+| Normalization and filtering | Canonical form (case, default port, bare trailing slash) and hostname allow/block rules, matched as text | `normalize_url`, `UrlFilterPolicy` in `src/url_normalizer.rs` |
+| `stellar.toml` discovery | The domain and the endpoint URLs read from `stellar.toml` pass `validate_anchor_domain` | `src/stellar_toml.rs` |
+| Injectable-transport POST | The endpoint must use `https://` (a scheme check only) | `post_with_options`, `post_with_options_metered` in `src/http_client.rs` |
+| Built HTTP clients | Bounded redirects and request timeouts | `ConnectionPolicy`, `build_client*` in `src/http_client.rs`; see [Connection Policy Timeouts](connection-policy-timeouts.md) |
+
+Webhook delivery (`deliver_webhook*`) posts to `endpoint_url` as configured.
+Validate that URL before you accept or store it.
+
+None of these checks amounts to complete SSRF protection. Endpoint
+configuration stays security-sensitive for these reasons:
+
+- **The URL decides where data goes.** Signed webhook payloads, bearer tokens,
+  Basic credentials, and API-key headers attached through
+  `OutboundRequestOptions` go to whichever host is configured. A wrong or
+  hostile URL receives them.
+- **The URL decides where your host connects.** Outbound requests leave from
+  the network the host runs in. That network may reach internal services the
+  public internet cannot.
+- **Validation is point-in-time.** A URL that passed validation can point
+  somewhere else later, because the library does not control DNS or the
+  remote server.
+
+Operator responsibilities:
+
+- Treat anchor, webhook, and proxy URLs as security configuration. Restrict
+  who can change them, and review changes the way you review code.
+- Use HTTPS endpoints only. Where redirects are unexpected, use
+  `ConnectionPolicy::strict()`.
+- Apply egress controls (a filtering proxy or network policy) outside this
+  library when the host can reach internal networks.
+- Keep credentials out of URLs. See
+  [Proxy Routing and Credential Handling](proxy-and-credentials.md#keeping-credentials-out-of-config-and-urls).
+
 ### Cryptography
 
 - Do not introduce new cryptographic primitives without a security review.
   The project uses Ed25519 (via `soroban-sdk`) for SEP-10 JWT verification.
 - Nonces and replay-protection timestamps are validated in
   `AnchorKitContract::submit_attestation`. Do not bypass these checks.
+- The contract verifies signatures against stored public keys; private keys
+  and shared secrets stay off-chain. See
+  [Cryptographic boundary](ARCHITECTURE.md#cryptographic-boundary) for which
+  material lives where.
 
 ### SEP-10 authentication
 

@@ -210,6 +210,9 @@ N/A (not applicable to this change) in the PR review.
       admin, and even then only via the documented retention/pruning API.
 - [ ] Tracing span and request-ID propagation is correctly threaded through any
       new async or multi-step operations.
+- [ ] New structured-log fields follow the
+      [log field review rule](structured-logging.md#reviewing-new-log-fields):
+      no tokens, secrets, or user identifiers, and correlation IDs stay opaque.
 
 ---
 
